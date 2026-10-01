@@ -2,7 +2,7 @@
 
 **Live demo:** https://merchant-activation-engine.streamlit.app
 
-An Outpost-aligned portfolio prototype that turns merchant onboarding inputs into a transparent pre-review readiness assessment. It detects missing information with deterministic rules, surfaces blockers to an operator, supports merchant follow-up drafting, and preserves a validation audit trail. Compliance-sensitive decisions remain human-led.
+An Outpost-aligned portfolio prototype that turns merchant onboarding inputs into a transparent pre-review readiness assessment. It detects missing information with deterministic rules, surfaces blockers to an operator, drafts merchant follow-ups with AI, routes those drafts to a human-review queue, and preserves an audit trail.
 
 > Independent portfolio work using synthetic data. This is not an official Outpost product or integration.
 
@@ -14,37 +14,40 @@ This prototype separates **mechanical completeness checking** from **human judge
 
 ## What I built
 
-- Airtable system of record with `Applications`, `Requirements`, and `Activity Log` tables
+- Airtable system of record with `Applications`, `Requirements`, `Follow-up Queue`, and `Activity Log` tables
 - 12 deterministic common pre-review checks
 - 6 additional Merchant-of-Record evidence-presence checks
-- Product-aware readiness scoring and blocker detection
+- Product-aware readiness scoring and exact blocker detection
 - Streamlit operator dashboard and application review screen
-- Airtable read/write integration and audit-event creation
-- Make scenario layer for workflow orchestration and AI-assisted merchant-facing wording
+- Controlled Airtable read/write path and audit-event creation
+- Make workflow that watches merchant-input changes, uses AI only to draft wording, writes drafts to a human-review queue, and records an audit event
 - Synthetic portfolio with deliberately constructed pass/fail cases
-- Unit and regression tests, including a live-data failure discovered during testing
+- Unit, regression, and portfolio-wide tests
+- GitHub Actions CI
 
-## Architecture
+## Finished workflow
 
 ```text
-Merchant application
+Merchant application changes
         ↓
-Airtable system of record
+Airtable - Applications
         ↓
-Deterministic readiness validator
+Deterministic helper formulas
+readiness + exact blocker list
         ↓
-Readiness score + exact blocker list
+Make workflow
         ↓
-Make orchestration
+AI drafts merchant-facing wording
         ↓
-AI-assisted merchant follow-up wording
+Airtable - Follow-up Queue
+status = Pending review
         ↓
-Human review
+Human review / approval
         ↓
-Airtable update + audit trail
-        ↓
-Streamlit operator view
+Airtable - Activity Log
 ```
+
+The Streamlit app independently exposes the same deterministic readiness logic for an operator-facing portfolio demo.
 
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the control design and failure modes.
 
@@ -55,16 +58,17 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the control design and failure mode
 | Required-field presence | Deterministic | Known rule, binary check |
 | Email / URL shape | Deterministic | Mechanical validation |
 | Readiness and blocker calculation | Deterministic | Must be reproducible |
-| Merchant follow-up wording | AI-assisted / deterministic fallback | Low-risk communication task |
+| Merchant follow-up wording | AI-assisted | Low-risk communication task |
+| Follow-up approval | Human | AI output is a draft only |
 | Document validity | Human | Requires evidence judgement |
 | Beneficial-owner assessment | Human | Compliance-sensitive |
-| Approval / rejection | Human | Never delegated to the model |
+| Merchant approval / rejection | Human | Never delegated to the model |
 
 A `100%` readiness score means **the documented completeness checks passed**. It does not mean the merchant is compliant or approved.
 
 ## Rule catalogue
 
-### Common checks — 12
+### Common checks - 12
 
 1. Selected regions
 2. Business description
@@ -79,7 +83,7 @@ A `100%` readiness score means **the documented completeness checks passed**. It
 11. Postal code
 12. Two-character country code
 
-### Additional MoR evidence-presence checks — 6
+### Additional MoR evidence-presence checks - 6
 
 1. Parties / beneficial owners marked complete
 2. Certificate of incorporation present
@@ -90,12 +94,33 @@ A `100%` readiness score means **the documented completeness checks passed**. It
 
 These six checks only confirm that evidence is marked as present. They do **not** validate the evidence itself.
 
+## Verified end-to-end case
+
+`APP-002 - Atlas Learning Ltd` is a synthetic MoR application with one deliberately missing requirement: **Shareholder Register**.
+
+Expected deterministic result:
+
+- 17 / 18 applicable checks pass
+- readiness = **94.44%**
+- blocker count = **1**
+- blocker = **Shareholder Register**
+
+On 1 October 2026 the Make workflow was run end-to-end against this test case. It successfully:
+
+1. read the merchant-input change,
+2. consumed the deterministic result,
+3. generated a constrained AI follow-up draft,
+4. created a `Pending review` record in `Follow-up Queue`, and
+5. created a `Follow-up drafted` event in `Activity Log`.
+
+The AI output did not change the deterministic blocker list and did not approve or reject the merchant.
+
 ## Synthetic test portfolio
 
 The repository contains 12 synthetic applications with deliberately constructed failure cases. Examples:
 
 - `APP-001`: complete MoR case
-- `APP-002`: missing Shareholder Register → 17/18 checks → 94.44% readiness
+- `APP-002`: missing Shareholder Register -> 94.44% readiness
 - `APP-005`: missing Store URLs, Articles of Association and Shareholder Register
 - `APP-010`: ToR case missing Selected Regions
 - `APP-012`: five missing MoR evidence items
@@ -104,7 +129,7 @@ The repository contains 12 synthetic applications with deliberately constructed 
 
 ## Failure discovered during live testing
 
-During the first live Airtable write test, an unchecked checkbox was omitted by Airtable and became `NaN` after the records were assembled into pandas. The initial implementation interpreted that value as truthy, causing `APP-002` to be incorrectly reported as 100% complete.
+During the first live Airtable write test, an unchecked checkbox was omitted by Airtable and became `NaN` after records were assembled into pandas. The initial implementation interpreted that value as truthy, causing `APP-002` to be incorrectly reported as 100% complete.
 
 The failure was:
 
@@ -118,6 +143,8 @@ The corrected result for `APP-002` is **94.44% readiness with one blocker: Share
 ## Public-demo security
 
 The deployed Streamlit app is read-only by default. Airtable write-back is enabled only when both an Airtable token is configured and `ENABLE_LIVE_WRITE=true` is explicitly set. This prevents a public portfolio visitor from mutating the demo base.
+
+The Make scenario writes AI output to a separate review queue rather than treating it as an approved merchant communication.
 
 No real merchant PII, production credentials, or real compliance documents should be stored in this prototype.
 
@@ -144,6 +171,8 @@ Keep `ENABLE_LIVE_WRITE=false` for public deployments. Turn it on only in a cont
 pip install pytest
 pytest -q
 ```
+
+The repository also runs the test suite in GitHub Actions on pushes and pull requests.
 
 ## Public source used to shape the prototype
 
