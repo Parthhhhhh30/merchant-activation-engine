@@ -1,54 +1,156 @@
 # Merchant Onboarding & Activation Engine
 
-A portfolio prototype inspired by Outpost's public merchant onboarding documentation.
+**Live demo:** https://merchant-activation-engine.streamlit.app
 
-## What it demonstrates
+An Outpost-aligned portfolio prototype that turns merchant onboarding inputs into a transparent pre-review readiness assessment. It detects missing information with deterministic rules, surfaces blockers to an operator, supports merchant follow-up drafting, and preserves a validation audit trail. Compliance-sensitive decisions remain human-led.
 
-- Deterministic completeness checks before an application reaches human review
-- Separate handling of general application requirements vs Merchant-of-Record KYB evidence
-- Operator-facing readiness score and blocker queue
-- Draft merchant follow-up generation
-- Airtable as the system of record
-- Audit logging
-- Explicit control boundary: the system does **not** make compliance approval decisions
+> Independent portfolio work using synthetic data. This is not an official Outpost product or integration.
 
-## Why this architecture
+## Problem
 
-Compliance-sensitive decisions should not be delegated to an LLM. The prototype therefore uses deterministic checks for known completeness requirements and keeps KYB/compliance review human-led. AI can later be added for low-risk unstructured tasks such as summarisation and drafting, while final decisions remain controlled.
+A merchant application can reach an operator with avoidable omissions: missing company details, incomplete URLs, or missing Merchant-of-Record evidence. Repeated manual completeness checks create unnecessary review cycles before higher-value compliance judgement can begin.
 
-## Data
+This prototype separates **mechanical completeness checking** from **human judgement**.
 
-The included Airtable base uses **synthetic merchant data only**. Do not store real customer PII or real compliance documents in this demo.
+## What I built
 
-## Public source used to shape the rule catalogue
+- Airtable system of record with `Applications`, `Requirements`, and `Activity Log` tables
+- 12 deterministic common pre-review checks
+- 6 additional Merchant-of-Record evidence-presence checks
+- Product-aware readiness scoring and blocker detection
+- Streamlit operator dashboard and application review screen
+- Airtable read/write integration and audit-event creation
+- Make scenario layer for workflow orchestration and AI-assisted merchant-facing wording
+- Synthetic portfolio with deliberately constructed pass/fail cases
+- Unit and regression tests, including a live-data failure discovered during testing
 
-Outpost Partner API onboarding documentation:
-https://outpost.ai/partner-docs/api-onboarding/
+## Architecture
 
-The prototype is independent portfolio work and is not an official Outpost product or integration.
+```text
+Merchant application
+        ↓
+Airtable system of record
+        ↓
+Deterministic readiness validator
+        ↓
+Readiness score + exact blocker list
+        ↓
+Make orchestration
+        ↓
+AI-assisted merchant follow-up wording
+        ↓
+Human review
+        ↓
+Airtable update + audit trail
+        ↓
+Streamlit operator view
+```
+
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the control design and failure modes.
+
+## Control boundary
+
+| Task | Owner | Why |
+|---|---|---|
+| Required-field presence | Deterministic | Known rule, binary check |
+| Email / URL shape | Deterministic | Mechanical validation |
+| Readiness and blocker calculation | Deterministic | Must be reproducible |
+| Merchant follow-up wording | AI-assisted / deterministic fallback | Low-risk communication task |
+| Document validity | Human | Requires evidence judgement |
+| Beneficial-owner assessment | Human | Compliance-sensitive |
+| Approval / rejection | Human | Never delegated to the model |
+
+A `100%` readiness score means **the documented completeness checks passed**. It does not mean the merchant is compliant or approved.
+
+## Rule catalogue
+
+### Common checks — 12
+
+1. Selected regions
+2. Business description
+3. Store / checkout URL
+4. Legal representative name + valid-looking email
+5. Company legal name
+6. Registration number
+7. Tax ID
+8. Company website with HTTP(S) scheme
+9. Registered address line 1
+10. City
+11. Postal code
+12. Two-character country code
+
+### Additional MoR evidence-presence checks — 6
+
+1. Parties / beneficial owners marked complete
+2. Certificate of incorporation present
+3. Articles of association present
+4. Shareholder register present
+5. Payout banking evidence present
+6. Regulatory disclosures present
+
+These six checks only confirm that evidence is marked as present. They do **not** validate the evidence itself.
+
+## Synthetic test portfolio
+
+The repository contains 12 synthetic applications with deliberately constructed failure cases. Examples:
+
+- `APP-001`: complete MoR case
+- `APP-002`: missing Shareholder Register → 17/18 checks → 94.44% readiness
+- `APP-005`: missing Store URLs, Articles of Association and Shareholder Register
+- `APP-010`: ToR case missing Selected Regions
+- `APP-012`: five missing MoR evidence items
+
+`test_portfolio.py` asserts the exact expected blocker list for every synthetic record.
+
+## Failure discovered during live testing
+
+During the first live Airtable write test, an unchecked checkbox was omitted by Airtable and became `NaN` after the records were assembled into pandas. The initial implementation interpreted that value as truthy, causing `APP-002` to be incorrectly reported as 100% complete.
+
+The failure was:
+
+1. reproduced against the live synthetic Airtable base,
+2. traced to missing-value handling,
+3. fixed in the shared validator, and
+4. protected with a regression test (`test_nan_checkbox_is_blocked`).
+
+The corrected result for `APP-002` is **94.44% readiness with one blocker: Shareholder Register**.
+
+## Public-demo security
+
+The deployed Streamlit app is read-only by default. Airtable write-back is enabled only when both an Airtable token is configured and `ENABLE_LIVE_WRITE=true` is explicitly set. This prevents a public portfolio visitor from mutating the demo base.
+
+No real merchant PII, production credentials, or real compliance documents should be stored in this prototype.
 
 ## Run locally
 
-1. Install Python 3.11+
-2. `pip install -r requirements.txt`
-3. Optional for live mode: create an Airtable Personal Access Token with read/write access to the demo base. Without a token, the app runs fully in bundled synthetic demo mode.
-4. Set:
-   - `AIRTABLE_TOKEN`
-   - `AIRTABLE_BASE_ID=apppey78aejeyVjMD`
-5. Run:
-   - `streamlit run app.py`
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+Optional live Airtable mode:
+
+```bash
+export AIRTABLE_TOKEN="..."
+export AIRTABLE_BASE_ID="apppey78aejeyVjMD"
+export ENABLE_LIVE_WRITE="false"
+```
+
+Keep `ENABLE_LIVE_WRITE=false` for public deployments. Turn it on only in a controlled test environment.
 
 ## Test
 
-`pytest -q`
+```bash
+pip install pytest
+pytest -q
+```
 
-## Current scope
+## Public source used to shape the prototype
 
-Version 0.2 focuses on pre-review completeness and operational activation readiness.
+Outpost Partner API onboarding documentation: https://outpost.ai/partner-docs/api-onboarding/
 
-Next planned layers:
-- n8n webhook orchestration
-- LLM-assisted merchant follow-up drafting with strict prompt/output schema
-- human approval queue
-- validation performance test across a larger synthetic portfolio
-- Streamlit Cloud deployment
+The rule catalogue is an interpretation for portfolio purposes, based on public documentation at the time of development. Production requirements can differ and change over time.
+
+## Limitations
+
+This project does not perform identity verification, sanction screening, legal analysis, tax advice, document-authenticity checks, or compliance approval. It is a pre-review operations prototype focused on completeness, exception visibility, communication support and auditability.
