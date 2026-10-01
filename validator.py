@@ -3,7 +3,7 @@ import re
 
 
 def is_present(value):
-    """Return False for Airtable/pandas-style missing values as well as blanks."""
+    """Return False for blanks and Airtable/pandas-style missing values."""
     if value is None:
         return False
     if isinstance(value, str):
@@ -59,6 +59,11 @@ MOR_FIELDS = [
 
 
 def validate(row):
+    """Return readiness score, blocker labels and per-rule results.
+
+    These are pre-review completeness checks only. They do not determine whether
+    evidence is genuine, sufficient, lawful or compliant.
+    """
     results = []
     for key, label, fn in COMMON_RULES:
         try:
@@ -71,6 +76,6 @@ def validate(row):
         for key, label, field in MOR_FIELDS:
             results.append((key, label, is_present(row.get(field))))
 
-    score = sum(x[2] for x in results) / len(results) if results else 0
+    score = sum(item[2] for item in results) / len(results) if results else 0
     blockers = [label for _, label, ok in results if not ok]
     return score, blockers, results
